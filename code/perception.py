@@ -5,17 +5,53 @@ import cv2
 # Threshold of RGB > 160 does a nice job of identifying ground pixels only
 def color_thresh(img, rgb_thresh=(160, 160, 160)):
     # Create an array of zeros same xy size as img, but single channel
+    #color_select = np.zeros_like(img[:,:,0])
+    # Require that each pixel be above all three threshold values in RGB
+    # above_thresh will now contain a boolean array with "True"
+    # where threshold was met
+    #above_thresh = (img[:,:,0] > rgb_thresh[0]) \
+    #            & (img[:,:,1] > rgb_thresh[1]) \
+    #            & (img[:,:,2] > rgb_thresh[2])
+    # Index the array of zeros with the boolean array and set to 1
+    #color_select[above_thresh] = 1
+    # Return the binary image
+    #return color_select
+
     color_select = np.zeros_like(img[:,:,0])
+    gold_select = np.zeros_like(img[:,:,0])
+    obstacle_select = np.zeros_like(img[:,:,0])
     # Require that each pixel be above all three threshold values in RGB
     # above_thresh will now contain a boolean array with "True"
     # where threshold was met
     above_thresh = (img[:,:,0] > rgb_thresh[0]) \
                 & (img[:,:,1] > rgb_thresh[1]) \
                 & (img[:,:,2] > rgb_thresh[2])
+    gold_thresh=(img[:,:,0] > 200) \
+                & (img[:,:,1] > 200) \
+                & (img[:,:,2] < 100)    
+    obstacle_thresh = (img[:,:,0] < rgb_thresh[0]) \
+                & (img[:,:,1] < rgb_thresh[1]) \
+                & (img[:,:,2] < rgb_thresh[2])
+            
     # Index the array of zeros with the boolean array and set to 1
     color_select[above_thresh] = 1
+    gold_select[gold_thresh] = 1
+    obstacle_select[obstacle_thresh] = 1
+    
+    #shed the out of side part
+    #set default out of sight image
+    blank = np.zeros([grid_img.shape[0],grid_img.shape[1],3],dtype=np.uint8)
+    blank.fill(255)
+    warped2=perspect_transform(blank, source, destination)
+    rgb_thresh=(160, 160, 160)
+    blackpart=(warped2[:,:,0] < rgb_thresh[0]) \
+                & (warped2[:,:,1] < rgb_thresh[1]) \
+                & (warped2[:,:,2] < rgb_thresh[2])
+
+    obstacle_select[blackpart] = 0
+    
     # Return the binary image
-    return color_select
+    return color_select,gold_thresh,obstacle_select
 
 # Define a function to convert to rover-centric coordinates
 def rover_coords(binary_img):
@@ -43,8 +79,9 @@ def rotate_pix(xpix, ypix, yaw):
     # TODO:
     # Convert yaw to radians
     # Apply a rotation
-    xpix_rotated = 0
-    ypix_rotated = 0
+    yaw_rad = yaw * np.pi / 180
+    xpix_rotated = xpix * np.cos(yaw_rad) - ypix * np.sin(yaw_rad)
+    ypix_rotated = xpix * np.sin(yaw_rad) + ypix * np.cos(yaw_rad)    
     # Return the result  
     return xpix_rotated, ypix_rotated
 
@@ -52,8 +89,8 @@ def rotate_pix(xpix, ypix, yaw):
 def translate_pix(xpix_rot, ypix_rot, xpos, ypos, scale): 
     # TODO:
     # Apply a scaling and a translation
-    xpix_translated = 0
-    ypix_translated = 0
+    xpix_translated = np.int(xpos+xpix_rot/scale)
+    ypix_translated = np.int(ypos+ypix_rot/scale)
     # Return the result  
     return xpix_translated, ypix_translated
 
@@ -103,8 +140,73 @@ def perception_step(Rover):
     # Update Rover pixel distances and angles
         # Rover.nav_dists = rover_centric_pixel_distances
         # Rover.nav_angles = rover_centric_angles
+    dst_size = 5 
+    #set src and dis
+    bottom_offset = 6
+    source = np.float32([[20, 135], [300 ,135],[200, 96], [120, 96]])
+    destination = np.float32([[image.shape[1]/2 - dst_size, image.shape[0] - bottom_offset],
+                  [image.shape[1]/2 + dst_size, image.shape[0] - bottom_offset],
+                  [image.shape[1]/2 + dst_size, image.shape[0] - 2*dst_size - bottom_offset], 
+                  [image.shape[1]/2 - dst_size, image.shape[0] - 2*dst_size - bottom_offset],
+                  ])
     
- 
+
+#read in the captured picture
+    warped = perspect_transform(Rover.img, source, destination)
+    threshed = color_thresh(warped)
+    tbi_obs = np.zeros([grid_img.shape[0],grid_img.shape[1],3],dtype=np.uint8)
+    tbi_obs.fill(160)
+    Rover.vision_image[:,:,0] = threshed[2]-tbi_obs
+    #Rover.vision_image[:,:,1] = threshed[1]-thresholded binary image
+    #Rover.vision_image[:,:,2] = navigable terrain color-thresholded binary image
     
+    scale=20;
+    world_size=200;
     
+    #read current position
+    xpos,ypos=Rover.pos     
+    yaw=Rover.yaw
+    
+        #record in the navigatable pix
+    xpix, ypix = rover_coords(threshed[0])
+    walkable=np.zeros((len(xpix),2))
+    counter=0;
+    for i in range(0,len(xpix)):
+        if xpix[i] < 40:
+            walkable[counter]=pix_to_world(xpix[i], ypix[i], xpos, ypos, yaw, world_size, scale)
+            counter+=1
+            
+    for i in range(0,len(walkable)):
+        coordinate=walkable[i]
+        x_world=coordinate[0]
+        y_world=coordinate[1]
+        #set threshold
+        x_pix_world = np.int(np.clip(x_world, 0, world_size - 1))
+        y_pix_world = np.int(np.clip(y_world, 0, world_size - 1))
+        
+        Rover.worldmap[y_pix_world,x_pix_world,2] += 1
+        
+         #record in the obstacle pix
+    xpix, ypix = rover_coords(threshed[2])
+    blockable=np.zeros((len(xpix),2))
+    counter=0;
+    for i in range(0,len(xpix)):
+        if xpix[i] < 40:
+            blockable[counter]=pix_to_world(xpix[i], ypix[i], xpos, ypos, yaw, world_size, scale)
+            counter+=1  
+    for i in range(0,len(blockable)):
+        coordinate=blockable[i]
+        x_world=coordinate[0]
+        y_world=coordinate[1]
+        #set threshold
+        x_pix_world = np.int(np.clip(x_world, 0, world_size - 1))
+        y_pix_world = np.int(np.clip(y_world, 0, world_size - 1))
+        Rover.worldmap[y_pix_world,x_pix_world,0] += 1
+        
+   #update polar coordinate
+    dist, angles = to_polar_coords(xpix, ypix)
+    mean_dir = np.mean(angles)
+    Rover.nav_dists = dist
+    Rover.nav_angles = mean_dir
+        
     return Rover
