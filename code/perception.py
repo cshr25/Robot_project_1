@@ -144,7 +144,7 @@ def perception_step(Rover):
     #set src and dis
     bottom_offset = 6
     source = np.float32([[20, 135], [300 ,135],[200, 96], [120, 96]])
-    destination = np.float32([[image.shape[1]/2 - dst_size, image.shape[0] - bottom_offset],
+    destination = np.float32([[Rover.image.shape[1]/2 - dst_size, Rover.image.shape[0] - bottom_offset],
                   [image.shape[1]/2 + dst_size, image.shape[0] - bottom_offset],
                   [image.shape[1]/2 + dst_size, image.shape[0] - 2*dst_size - bottom_offset], 
                   [image.shape[1]/2 - dst_size, image.shape[0] - 2*dst_size - bottom_offset],
@@ -154,7 +154,7 @@ def perception_step(Rover):
 #read in the captured picture
     warped = perspect_transform(Rover.img, source, destination)
     threshed = color_thresh(warped)
-    tbi_obs = np.zeros([grid_img.shape[0],grid_img.shape[1],3],dtype=np.uint8)
+    tbi_obs = np.zeros([Rover.shape[0],Rover.shape[1],3],dtype=np.uint8)
     tbi_obs.fill(160)
     Rover.vision_image[:,:,0] = threshed[2]-tbi_obs
     #Rover.vision_image[:,:,1] = threshed[1]-thresholded binary image
