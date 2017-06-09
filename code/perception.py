@@ -204,6 +204,7 @@ def perception_step(Rover):
         Rover.worldmap[y_pix_world,x_pix_world,0] += 1
         
    #update polar coordinate
+    xpix, ypix = rover_coords(threshed[0])
     dist, angles = to_polar_coords(xpix, ypix)
     mean_dir = np.mean(angles)
     Rover.nav_dists = dist
